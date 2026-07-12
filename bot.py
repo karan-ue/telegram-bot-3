@@ -17,13 +17,12 @@ from telegram.error import TelegramError
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 PORT = int(os.getenv("PORT", 8443))
 
-MAX_FILE_SIZE = 400_000_000  # 400 MB
+MAX_FILE_SIZE = 400_000_000
 SAFE_DOWNLOAD_LIMIT = 380_000_000
 
 MAX_CONCURRENT = 3
-AUTO_DELETE_SECONDS = 37 * 60  # 37 minutes
+AUTO_DELETE_SECONDS = 37 * 60
 
-# Quality Selection Logic
 FORMAT_SELECTOR = (
     "best[height<=720][filesize<=198000000]/"
     "best[height<=480][filesize<=400000000]/"
@@ -59,87 +58,67 @@ download_semaphore = asyncio.Semaphore(MAX_CONCURRENT)
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ====================== URL VALIDATION ======================
 async def validate_url(url: str) -> tuple[bool, str]:
     try:
         if len(url) > 2048:
             return False, "❌ Invalid URL: Bahut lamba hai."
-        
         parsed = urlparse(url)
         if parsed.scheme not in ["http", "https"]:
             return False, "❌ Sirf http/https URLs allowed hain."
-        
         if not parsed.hostname:
             return False, "❌ Invalid hostname."
-        
         lower_host = parsed.hostname.lower()
         if any(x in lower_host for x in ["localhost", "127.0.0.1", "0.0.0.0"]):
             return False, "❌ Localhost URLs not allowed."
-        
         try:
             ip = ipaddress.ip_address(parsed.hostname)
             if not ip.is_global:
                 return False, "❌ Private/unsafe IP not allowed."
         except ValueError:
             pass
-        
         loop = asyncio.get_running_loop()
         addrs = await loop.getaddrinfo(parsed.hostname, None)
         for addr in addrs:
             ip = ipaddress.ip_address(addr[4][0])
             if not ip.is_global:
                 return False, "❌ Unsafe network address."
-        
         return True, ""
     except Exception:
         return False, "❌ URL parse nahi ho saka."
 
-# ====================== DOWNLOAD & UPLOAD ======================
 async def download_and_upload(update: Update, context: ContextTypes.DEFAULT_TYPE, url: str):
     status_msg = None
     temp_dir = None
     video_path = None
-    
     try:
         async with download_semaphore:
             status_msg = await update.message.reply_text("🔎 URL validating...")
-            
             valid, err = await validate_url(url)
             if not valid:
                 await status_msg.edit_text(err)
                 return
-            
             await status_msg.edit_text("⬇️ Downloading best quality (max 400MB)...")
-            
             temp_dir_obj = tempfile.TemporaryDirectory(dir="/tmp")
             temp_dir = temp_dir_obj.name
-            
             loop = asyncio.get_running_loop()
             ydl_opts = YDL_OPTIONS.copy()
             ydl_opts["outtmpl"] = os.path.join(temp_dir, ydl_opts["outtmpl"])
-            
             def run_ydl():
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     info = ydl.extract_info(url, download=True)
                     return ydl.prepare_filename(info), info
-            
             video_path, info = await loop.run_in_executor(None, run_ydl)
-            
             if not os.path.exists(video_path):
                 await status_msg.edit_text("❌ Video file not found after download.")
                 return
-            
             file_size = os.path.getsize(video_path)
             if file_size > MAX_FILE_SIZE:
-                await status_msg.edit_text("❌ Video 400 MB se bada hai. Chhota version available nahi mila.")
+                await status_msg.edit_text("❌ Video 400 MB se bada hai.")
                 return
-            
             await status_msg.edit_text("⬆️ Uploading to Telegram...")
-            
             title = (info.get("title") or "Video")[:800]
             size_mb = file_size / (1024 * 1024)
             caption = f"✅ {title}\n📦 Size: {size_mb:.2f} MB\n⏱️ Auto-delete: 37 minutes"
-            
             with open(video_path, "rb") as f:
                 try:
                     sent = await context.bot.send_video(
@@ -160,20 +139,17 @@ async def download_and_upload(update: Update, context: ContextTypes.DEFAULT_TYPE
                         write_timeout=300,
                         reply_to_message_id=update.message.message_id
                     )
-            
             asyncio.create_task(delete_after_delay(context, update.effective_chat.id, sent.message_id))
-            
             try:
                 await status_msg.delete()
             except:
                 pass
-                
     except yt_dlp.utils.DownloadError:
-        msg = "❌ Download failed. Video private, region-locked, ya unsupported ho sakta hai."
+        msg = "❌ Download failed."
         await (status_msg.edit_text(msg) if status_msg else update.message.reply_text(msg))
     except Exception as e:
         logger.error(f"Error: {e}", exc_info=True)
-        msg = "❌ Unexpected error. Thodi der baad try karo."
+        msg = "❌ Unexpected error."
         await (status_msg.edit_text(msg) if status_msg else update.message.reply_text(msg))
     finally:
         if temp_dir and os.path.exists(temp_dir):
@@ -183,28 +159,14 @@ async def delete_after_delay(context: ContextTypes.DEFAULT_TYPE, chat_id: int, m
     await asyncio.sleep(AUTO_DELETE_SECONDS)
     try:
         await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
-        logger.info(f"Auto-deleted message {msg_id}")
     except Exception as e:
         logger.warning(f"Delete failed: {e}")
 
-# ====================== COMMANDS ======================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "👋 Namaste!\n\n"
-        "Video URL bhejo, main download karke upload kar dunga (max 400 MB).\n"
-        "37 minutes baad auto delete ho jayega.\n\n"
-        "Supported: YouTube, Instagram, TikTok, Faphouse, XNXX, PornHub etc."
-    )
+    await update.message.reply_text("👋 Namaste! Video URL bhejo (max 400 MB).")
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "📖 Help:\n\n"
-        "• Koi bhi video URL bhejo\n"
-        "• Max 400 MB\n"
-        "• Best quality (720p priority)\n"
-        "• 37 min baad delete\n"
-        "• 3 concurrent downloads"
-    )
+    await update.message.reply_text("📖 Video URL bhej do.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text or ""
@@ -212,23 +174,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for url in urls[:1]:
         await download_and_upload(update, context, url)
 
-# ====================== MAIN ======================
 def main():
     if not TOKEN:
         logger.error("TELEGRAM_BOT_TOKEN missing!")
         return
-    
     app = Application.builder().token(TOKEN).build()
-    
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(MessageHandler(filters.TEXT & \~filters.COMMAND, handle_message))
     
     async def post_init(app):
-        await app.bot.set_my_commands([
-            BotCommand("start", "Start bot"),
-            BotCommand("help", "Help")
-        ])
+        await app.bot.set_my_commands([BotCommand("start", "Start"), BotCommand("help", "Help")])
     app.post_init = post_init
     
     logger.info(f"Starting webhook on port {PORT}")
@@ -236,7 +192,7 @@ def main():
         listen="0.0.0.0",
         port=PORT,
         url_path=TOKEN,
-        webhook_url=f"https://telegram-bot-3.onrender.com/{TOKEN}"}"  # ← Yeh deploy ke baad change kar dena
+        webhook_url=f"https://telegram-bot-3.onrender.com/{TOKEN}"
     )
 
 if __name__ == "__main__":
