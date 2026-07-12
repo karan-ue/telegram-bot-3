@@ -236,7 +236,7 @@ def main():
         listen="0.0.0.0",
         port=PORT,
         url_path=TOKEN,
-        webhook_url=f"https://your-render-app.onrender.com/{TOKEN}"  # ← Yeh deploy ke baad change kar dena
+        webhook_url=f"https://telegram-bot-3.onrender.com/{TOKEN}"}"  # ← Yeh deploy ke baad change kar dena
     )
 
 if __name__ == "__main__":
