@@ -76,15 +76,13 @@ async def validate_url(url: str) -> tuple[bool, str]:
         if any(x in lower_host for x in ["localhost", "127.0.0.1", "0.0.0.0"]):
             return False, "❌ Localhost URLs not allowed."
         
-        # IP Safety
         try:
             ip = ipaddress.ip_address(parsed.hostname)
             if not ip.is_global:
                 return False, "❌ Private/unsafe IP not allowed."
         except ValueError:
-            pass  # Domain name
+            pass
         
-        # DNS check
         loop = asyncio.get_running_loop()
         addrs = await loop.getaddrinfo(parsed.hostname, None)
         for addr in addrs:
@@ -163,7 +161,6 @@ async def download_and_upload(update: Update, context: ContextTypes.DEFAULT_TYPE
                         reply_to_message_id=update.message.message_id
                     )
             
-            # Auto delete task
             asyncio.create_task(delete_after_delay(context, update.effective_chat.id, sent.message_id))
             
             try:
@@ -225,9 +222,8 @@ def main():
     
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_cmd))
-    app.add_handler(MessageHandler(filters.TEXT & \\~filters.COMMAND, handle_message))
+    app.add_handler(MessageHandler(filters.TEXT & \~filters.COMMAND, handle_message))
     
-    # Set commands
     async def post_init(app):
         await app.bot.set_my_commands([
             BotCommand("start", "Start bot"),
@@ -240,7 +236,7 @@ def main():
         listen="0.0.0.0",
         port=PORT,
         url_path=TOKEN,
-        webhook_url=f"https://your-render-app.onrender.com/{TOKEN}"  # Update after deploy
+        webhook_url=f"https://your-render-app.onrender.com/{TOKEN}"  # ← Yeh deploy ke baad change kar dena
     )
 
 if __name__ == "__main__":
